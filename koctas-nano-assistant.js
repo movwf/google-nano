@@ -371,8 +371,13 @@
       fields.push('hidden-fields');
     }
 
+    console.log(ctx);
+
     var text = clamp(lines.join('\n'), CONFIG.maxContextChars);
     var sparse = fields.length === 0;
+
+    console.log(text);
+
     return { text: text, fields: fields, sparse: sparse };
   }
 
