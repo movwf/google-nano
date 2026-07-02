@@ -39,7 +39,7 @@
     maxSpecs: 18,
     maxBullets: 8,
     maxDescriptionChars: 1200,
-    maxHiddenFields: 10,
+    maxHiddenFields: 50,
     stabilityAttempts: 10,
     stabilityIntervalMs: 600
   };
@@ -546,9 +546,9 @@
       '<p>' + esc(msg) + '</p>' +
       (isBrowser
         ? '<p>To enable it: open a new tab, visit these two flags, set both to <b>Enabled</b>, then relaunch Chrome:</p>' +
-          '<div class="flagbox">chrome://flags/#optimization-guide-on-device-model</div>' +
-          '<div class="flagbox">chrome://flags/#prompt-api-for-gemini-nano</div>' +
-          '<p>Then reload this page and re-paste the assistant.</p>'
+        '<div class="flagbox">chrome://flags/#optimization-guide-on-device-model</div>' +
+        '<div class="flagbox">chrome://flags/#prompt-api-for-gemini-nano</div>' +
+        '<p>Then reload this page and re-paste the assistant.</p>'
         : '') +
       '<p>No product answers are generated without local AI — this assistant never falls back to a cloud model.</p>' +
       '</div>'
@@ -636,10 +636,10 @@
       '<div class="body" data-role="scrollbody">' + bodyInner + '</div>' +
       (showChat
         ? '<form class="inputwrap" data-action="submit">' +
-          '<input type="text" name="q" placeholder="Ask a question about this product…" ' +
-          (state.thinking ? 'disabled' : '') + ' autocomplete="off" />' +
-          '<button class="btn" type="submit" ' + (state.thinking ? 'disabled' : '') + '>Ask</button>' +
-          '</form>'
+        '<input type="text" name="q" placeholder="Ask a question about this product…" ' +
+        (state.thinking ? 'disabled' : '') + ' autocomplete="off" />' +
+        '<button class="btn" type="submit" ' + (state.thinking ? 'disabled' : '') + '>Ask</button>' +
+        '</form>'
         : '') +
       '<div class="footer">Runs on-device via Chrome Gemini Nano · nothing sent to a server</div>' +
       '</div>';
@@ -752,7 +752,7 @@
       .catch(function (e) {
         var isQuota = (e && e.name === 'QuotaExceededError') || /quota/i.test(String(e));
         if (isQuota) {
-          try { state.session.destroy && state.session.destroy(); } catch (e2) {}
+          try { state.session.destroy && state.session.destroy(); } catch (e2) { }
           createSession()
             .then(function (session) {
               state.session = session;
@@ -794,7 +794,7 @@
       state.digest = digest.text;
       state.fields = digest.fields;
       state.sparse = digest.sparse;
-      try { state.session && state.session.destroy && state.session.destroy(); } catch (e) {}
+      try { state.session && state.session.destroy && state.session.destroy(); } catch (e) { }
       state.session = null;
       ensureModel();
     });
@@ -837,7 +837,7 @@
 
   // Free GPU/RAM if the tab is closing.
   window.addEventListener('beforeunload', function () {
-    try { state.session && state.session.destroy && state.session.destroy(); } catch (e) {}
+    try { state.session && state.session.destroy && state.session.destroy(); } catch (e) { }
   });
 
   // ---------------------------------------------------------------------
