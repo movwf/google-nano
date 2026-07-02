@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PDP Nano Assistant — on-device shopper Q&A for any product page</title>
+<meta name="description" content="A console-loadable assistant that reads a product page and answers shopper questions using Chrome's on-device Gemini Nano model. No server, no cloud LLM." />
+<style>
+  :root{
+    --bg:#141312; --panel:#1C1B1A; --surface:#242322; --surface-2:#2D2B29;
+    --text:#F3EFE9; --muted:#A69C8F; --accent:#D97D3D; --accent-quiet:rgba(217,125,61,.14);
+    --green:#7FB88F; --red:#D9645A; --border:rgba(255,255,255,.09);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, "Roboto Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:var(--sans);}
+  body{line-height:1.5;}
+  a{color:var(--accent);}
+  .wrap{max-width:760px;margin:0 auto;padding:64px 24px 120px;}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 14px;}
+  h1{font-size:clamp(28px,4.4vw,40px);line-height:1.12;margin:0 0 16px;letter-spacing:-0.01em;}
+  .lede{color:var(--muted);font-size:16px;max-width:56ch;margin:0 0 40px;}
+  h2{font-size:14px;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:56px 0 16px;padding-top:24px;border-top:1px solid var(--border);}
+  section:first-of-type h2{border-top:none;padding-top:0;}
+  p{margin:0 0 14px;}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;}
+  .demo-card{display:flex;gap:18px;align-items:flex-start;}
+  .demo-swatch{flex:none;width:88px;height:88px;border-radius:12px;background:
+    linear-gradient(135deg,#3a352f,#232019 60%);
+    display:flex;align-items:center;justify-content:center;font-size:30px;}
+  .demo-body h3{margin:0 0 6px;font-size:17px;}
+  .demo-price{font-family:var(--mono);font-size:14px;color:var(--accent);margin:0 0 8px;}
+  .demo-body p{color:var(--muted);font-size:13.5px;margin:0;}
+  .hint{font-size:12.5px;color:var(--muted);margin-top:14px;}
+  .steps{padding:0;margin:0;list-style:none;counter-reset:step;}
+  .steps li{counter-increment:step;position:relative;padding:0 0 18px 34px;}
+  .steps li::before{content:counter(step);position:absolute;left:0;top:0;width:22px;height:22px;border-radius:7px;
+    background:var(--surface);border:1px solid var(--border);color:var(--accent);font-family:var(--mono);font-size:12px;
+    display:flex;align-items:center;justify-content:center;font-weight:700;}
+  .steps b{color:var(--text);}
+  .codebox{position:relative;background:#0F0E0D;border:1px solid var(--border);border-radius:10px;padding:16px 44px 16px 16px;
+    font-family:var(--mono);font-size:12.5px;color:#E8E1D6;overflow-x:auto;white-space:pre-wrap;word-break:break-word;}
+  .copybtn{position:absolute;top:10px;right:10px;background:var(--surface);border:1px solid var(--border);color:var(--muted);
+    font-family:var(--mono);font-size:11px;padding:5px 9px;border-radius:7px;cursor:pointer;}
+  .copybtn:hover{color:var(--text);border-color:var(--accent);}
+  .copybtn.copied{color:var(--green);border-color:var(--green);}
+  .flags{display:grid;gap:8px;margin:14px 0;}
+  .flags code{display:block;background:#0F0E0D;border:1px solid var(--border);border-radius:8px;padding:8px 10px;
+    font-family:var(--mono);font-size:12px;color:var(--accent);}
+  .checklist{list-style:none;padding:0;margin:0;display:grid;gap:8px;font-size:13.5px;color:var(--muted);}
+  .checklist li::before{content:"— ";color:var(--accent);}
+  footer{margin-top:64px;padding-top:24px;border-top:1px solid var(--border);color:var(--muted);font-size:12.5px;font-family:var(--mono);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">On-device PDP assistant</p>
+  <h1>An assistant that reads the product page it's sitting on — and answers with Chrome's local model, not a cloud one.</h1>
+  <p class="lede">
+    Paste one snippet into DevTools Console on any product page. It extracts what's actually on the page
+    (JSON-LD, price, specs, description) and answers shopper questions using Chrome's built-in Gemini Nano.
+    Nothing — page content or questions — leaves the browser.
+  </p>
+
+  <section>
+    <h2>Try it below</h2>
+    <p>This page is itself a tiny product page. The assistant is already loaded — look for the chip in the bottom-right corner.</p>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "Atlas Reading Chair — Walnut & Charcoal Boucle",
+      "description": "A low-slung reading chair with a solid walnut frame and a charcoal boucle seat cushion. Fixed back, no recline. Assembly takes about 15 minutes with the included hex key. Not intended for outdoor use.",
+      "brand": { "@type": "Brand", "name": "Demo Goods Co." },
+      "offers": { "@type": "Offer", "price": "4299.00", "priceCurrency": "TRY", "availability": "https://schema.org/InStock" }
+    }
+    </script>
+    <div class="card demo-card">
+      <div class="demo-swatch">🪑</div>
+      <div class="demo-body">
+        <h3>Atlas Reading Chair — Walnut &amp; Charcoal Boucle</h3>
+        <p class="demo-price fiyat">₺4.299,00</p>
+        <p>
+          A low-slung reading chair with a solid walnut frame and a charcoal boucle seat cushion.
+          Fixed back, no recline. Assembly takes about 15 minutes with the included hex key.
+          Not intended for outdoor use.
+        </p>
+      </div>
+    </div>
+    <table style="display:none">
+      <!-- extra structured facts for the assistant to ground on, hidden from visual layout -->
+      <tr><th>Frame material</th><td>Solid walnut</td></tr>
+      <tr><th>Upholstery</th><td>Charcoal boucle</td></tr>
+      <tr><th>Weight capacity</th><td>120 kg</td></tr>
+      <tr><th>Recline</th><td>Fixed back, does not recline</td></tr>
+      <tr><th>Assembly time</th><td>~15 minutes</td></tr>
+      <tr><th>Indoor/Outdoor</th><td>Indoor use only</td></tr>
+    </table>
+    <p class="hint">Try asking: “does it recline?”, “what's it made of?”, “can I use it outside?”, or “does it come in another color?” (that last one isn't on the page — watch it say so instead of guessing).</p>
+  </section>
+
+  <section>
+    <h2>Run it on a real PDP</h2>
+    <p>Open the target product page, open DevTools Console (<code>⌥⌘J</code> / <code>Ctrl+Shift+J</code>), paste this, press Enter:</p>
+    <div class="codebox" id="snippet">(async () => {
+  const url = "REPLACE_WITH_YOUR_DEPLOY_URL/koctas-nano-assistant.js";
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    (0, eval)(await res.text());
+  } catch (e) {
+    console.error("[PDP Nano Assistant] couldn't load hosted bundle:", e);
+    console.warn("If this page's CSP blocks the fetch, paste the full bundle.js source directly into Console instead.");
+  }
+})();</div>
+    <button class="copybtn" id="copyBtn" type="button">Copy</button>
+    <p class="hint">Swap in this deployment's real URL once it's live (see README). The reference target for this build is the Koçtaş <em>Serra 3 Kişilik Bazalı Kanepe Çekyat Koltuk Gri</em> PDP.</p>
+  </section>
+
+  <section>
+    <h2>Before it'll answer anything</h2>
+    <p>This needs Chrome's on-device model, which is still flag-gated for regular web pages as of mid-2026. In a new tab, set both of these to <b>Enabled</b>, then relaunch Chrome:</p>
+    <div class="flags">
+      <code>chrome://flags/#optimization-guide-on-device-model</code>
+      <code>chrome://flags/#prompt-api-for-gemini-nano</code>
+    </div>
+    <ul class="checklist">
+      <li>Chrome 138 or newer, desktop</li>
+      <li>First run downloads the model (a few GB, one-time, shared across all sites) — the widget shows a progress bar for this</li>
+      <li>No flags, no download, no <code>LanguageModel</code> global → the widget explains that plainly instead of pretending to work</li>
+    </ul>
+  </section>
+
+  <footer>
+    runs entirely on-device · no product data or questions leave the browser · no cloud LLM in this path
+  </footer>
+</div>
+
+<script>
+  document.getElementById('copyBtn').addEventListener('click', function () {
+    var text = document.getElementById('snippet').textContent;
+    var btn = this;
+    function done(ok) {
+      btn.textContent = ok ? 'Copied' : 'Select & copy manually';
+      btn.classList.toggle('copied', ok);
+      setTimeout(function () { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function(){done(true);}, function(){done(false);});
+    } else {
+      done(false);
+    }
+  });
+</script>
+
+<script src="./koctas-nano-assistant.js"></script>
+</body>
+</html>
