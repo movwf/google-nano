@@ -39,6 +39,7 @@
     maxSpecs: 18,
     maxBullets: 8,
     maxDescriptionChars: 1200,
+    maxHiddenFields: 10,
     stabilityAttempts: 10,
     stabilityIntervalMs: 600
   };
@@ -201,6 +202,56 @@
   }
 
   // ---------------------------------------------------------------------
+  // Extraction: input[type="hidden"] fields
+  // Many PDPs (a lot of Turkish e-commerce sites are ASP.NET WebForms under
+  // the hood, e.g. id="ctl00_ContentPlaceHolder1_hdnRenk") stash real product
+  // facts — color code, SKU, price, variant — in hidden inputs that never
+  // make it into JSON-LD or visible markup. We read them, but filter hard:
+  // this is the one source most likely to also contain CSRF tokens, view
+  // state, and session junk that has nothing to do with the product.
+  // ---------------------------------------------------------------------
+  var HIDDEN_NOISE_NAME_RE = /csrf|__|token|viewstate|antiforgery|verificationtoken|eventvalidation|captcha|nonce|session|honeypot|analytics|gtm|utm|referr|cookie/i;
+  var GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var PRICE_NAME_RE = /price|fiyat|tutar|ucret/i;
+  var SKU_NAME_RE = /sku|stokkod|urunkod|productcode|itemcode|urunid|productid|modelkod/i;
+
+  function humanizeHiddenName(raw) {
+    if (!raw) return '';
+    // ASP.NET control trees look like "ctl00$ContentPlaceHolder1$hdnRenk" or
+    // "ctl00_ContentPlaceHolder1_hdnRenk" — the meaningful part is the last segment.
+    var seg = raw.split(/[$]/).pop();
+    var parts = seg.split('_');
+    seg = parts[parts.length - 1] || seg;
+    seg = seg.replace(/^(hdn|hf|hid|txt|inp|lbl)[-_]?/i, '');
+    seg = seg.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').trim();
+    if (!seg) return '';
+    return seg.replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+  }
+
+  function collectHiddenInputPairs() {
+    var inputs = document.querySelectorAll('input[type="hidden"]');
+    var out = [];
+    var seenLabels = {};
+    for (var i = 0; i < inputs.length && out.length < 40; i++) {
+      var el = inputs[i];
+      var raw = (el.value || '').trim();
+      if (!raw || raw.length > 80) continue; // empty, or a blob (serialized JSON, long token, etc.)
+      var rawName = el.name || el.id || '';
+      if (!rawName || HIDDEN_NOISE_NAME_RE.test(rawName)) continue;
+      if (GUID_RE.test(raw)) continue;
+      if (/^https?:\/\//i.test(raw)) continue; // URLs aren't useful as a spec fact here
+      if (!/\s/.test(raw) && raw.length > 40) continue; // long, spaceless -> likely a hash/token, not a fact
+      var label = humanizeHiddenName(rawName);
+      if (!label || label.length > 40) continue;
+      var key = label.toLowerCase();
+      if (seenLabels[key]) continue;
+      seenLabels[key] = true;
+      out.push({ name: rawName, label: label, value: raw });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------
   // Build unified product context
   // ---------------------------------------------------------------------
   function buildContext() {
@@ -229,6 +280,35 @@
     var domPrice = extractPriceFromDOM();
     var specs = extractSpecsFromDOM();
     var bullets = extractBulletsFromDOM();
+    var hiddenPairs = collectHiddenInputPairs();
+
+    var price = jsonPrice || domPrice.price;
+    var consumedHiddenNames = {};
+
+    if (!price) {
+      var priceHidden = hiddenPairs.filter(function (h) {
+        return PRICE_NAME_RE.test(h.name) && /^[\d.,]+$/.test(h.value);
+      })[0];
+      if (priceHidden) {
+        price = priceHidden.value + ' (currency not confirmed on page — treat as approximate)';
+        consumedHiddenNames[priceHidden.name] = true;
+      }
+    }
+    if (!sku) {
+      var skuHidden = hiddenPairs.filter(function (h) { return SKU_NAME_RE.test(h.name); })[0];
+      if (skuHidden) {
+        sku = skuHidden.value;
+        consumedHiddenNames[skuHidden.name] = true;
+      }
+    }
+
+    var specKeysLower = {};
+    specs.forEach(function (kv) { specKeysLower[kv[0].toLowerCase()] = true; });
+
+    var hiddenFields = hiddenPairs
+      .filter(function (h) { return !consumedHiddenNames[h.name] && !specKeysLower[h.label.toLowerCase()]; })
+      .slice(0, CONFIG.maxHiddenFields)
+      .map(function (h) { return [h.label, h.value]; });
 
     var crumbsJSON = [];
     if (jsonld.breadcrumbs[0] && Array.isArray(jsonld.breadcrumbs[0].itemListElement)) {
@@ -242,12 +322,13 @@
       title: (title || '').trim(),
       url: location.href,
       breadcrumbs: crumbs,
-      price: jsonPrice || domPrice.price,
+      price: price,
       wasPrice: domPrice.wasPrice,
       brand: brand,
       sku: sku,
       specs: specs,
       bullets: bullets,
+      hiddenFields: hiddenFields,
       description: clamp((description || '').trim(), CONFIG.maxDescriptionChars),
       availabilitySignal: extractAvailability(),
       image: image
@@ -283,6 +364,11 @@
     if (ctx.description) {
       lines.push('Description: ' + ctx.description);
       fields.push('description');
+    }
+    if (ctx.hiddenFields.length) {
+      lines.push('Additional page data (from hidden form fields, not visibly shown to the shopper):');
+      ctx.hiddenFields.forEach(function (kv) { lines.push('- ' + kv[0] + ': ' + kv[1]); });
+      fields.push('hidden-fields');
     }
 
     var text = clamp(lines.join('\n'), CONFIG.maxContextChars);
@@ -578,6 +664,7 @@
       'You are a concise shopping assistant embedded directly on a single product page (PDP).',
       'Answer only using the PRODUCT CONTEXT below, extracted from the page the shopper is currently viewing.',
       "If the answer isn't present in the context, say plainly that the page doesn't mention it. Never invent specs, materials, dimensions, price, or stock status.",
+      'Some context may be labeled as coming from hidden page fields rather than visible text — treat it as real page data, but note if a value looks like an internal code rather than a plain answer (e.g. a color code instead of a color name).',
       'Reply in the same language the shopper writes in. Keep answers to 2-4 sentences unless a short list is clearer.',
       'When useful, briefly note which part of the listing you used (e.g. "per the specifications" or "per the description").',
       '',
