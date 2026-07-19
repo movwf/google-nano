@@ -27,7 +27,8 @@
     dataMap: {}, // holds extracted DOM elements and structured info
     highlighted: [], // [{ id, explanation }]
     logs: [], // [{ type: 'think'|'action'|'observation', text: string, sectionId?: string }]
-    finalResult: null
+    finalResult: null,
+    showDevLogs: false // DEV toggle to show/hide the technical ReAct loop activity (hidden by default for consumer use)
   };
 
   // 3. Setup UI Container and Shadow DOM
@@ -1145,6 +1146,12 @@ ${smartText.replace('Technology Card: ', '')}`;
         Nano PDP Assistant
       </div>
       <div class="header-actions">
+        <button class="icon-btn ${state.showDevLogs ? 'active' : ''}" id="btn-dev-toggle" title="Toggle Developer Logs">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+        </button>
         <button class="icon-btn" id="btn-reset" title="Reset Assistant">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"></path>
@@ -1254,7 +1261,7 @@ ${smartText.replace('Technology Card: ', '')}`;
       content.appendChild(quickQs);
 
       // Console logs
-      if (state.logs.length > 0) {
+      if (state.showDevLogs && state.logs.length > 0) {
         const consoleWrapper = document.createElement('div');
         consoleWrapper.style.display = 'flex';
         consoleWrapper.style.flexDirection = 'column';
@@ -1310,22 +1317,69 @@ ${smartText.replace('Technology Card: ', '')}`;
         }, 50);
       }
 
-      // Shimmer loading card
-      if (state.loading && state.logs.length === 0) {
-        const loadingCard = document.createElement('div');
-        loadingCard.className = 'result-card';
-        loadingCard.innerHTML = `
-          <h3 style="margin-bottom: 12px;">
-            <svg class="pulse" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary); margin-right: 6px;">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-            Analyzing Product Data...
-          </h3>
-          <div class="shimmer" style="margin-bottom: 8px; width: 100%;"></div>
-          <div class="shimmer" style="margin-bottom: 8px; width: 85%;"></div>
-          <div class="shimmer" style="width: 60%;"></div>
-        `;
-        content.appendChild(loadingCard);
+      // Shimmer loading card or consumer-friendly progress indicator
+      if (state.loading) {
+        if (!state.showDevLogs) {
+          // Render a beautiful, consumer-friendly scanning status card
+          const progressCard = document.createElement('div');
+          progressCard.className = 'result-card';
+          
+          let statusMessage = "Analyzing product details...";
+          if (state.logs.length > 0) {
+            const lastLog = state.logs[state.logs.length - 1];
+            if (lastLog.type === 'think') {
+              statusMessage = "Formulating analysis strategy...";
+            } else if (lastLog.type === 'action') {
+              if (lastLog.text.includes('read_section')) {
+                statusMessage = "Inspecting product specifications...";
+              } else if (lastLog.text.includes('toggle_for_highlight')) {
+                statusMessage = "Highlighting discovered evidence on the page...";
+              } else if (lastLog.text.includes('summarize_technologies')) {
+                statusMessage = "Summarizing core technologies...";
+              } else {
+                statusMessage = "Retrieving product elements...";
+              }
+            } else if (lastLog.type === 'observation') {
+              statusMessage = "Evaluating parsed information...";
+            }
+          }
+          
+          progressCard.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 16px;">
+              <div class="loader-radar">
+                <div class="radar-ping"></div>
+                <div class="radar-dot"></div>
+              </div>
+              <div style="flex: 1;">
+                <h4 style="margin: 0 0 4px 0; color: #fff; font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                  AI Assistant is Analyzing
+                  <span style="display: inline-flex; gap: 2px;">
+                    <span style="animation: dot-glow 1s infinite alternate; width: 4px; height: 4px; background: #fff; border-radius: 50%;"></span>
+                    <span style="animation: dot-glow 1s infinite alternate 0.2s; width: 4px; height: 4px; background: #fff; border-radius: 50%;"></span>
+                    <span style="animation: dot-glow 1s infinite alternate 0.4s; width: 4px; height: 4px; background: #fff; border-radius: 50%;"></span>
+                  </span>
+                </h4>
+                <p style="margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.4;">${statusMessage}</p>
+              </div>
+            </div>
+          `;
+          content.appendChild(progressCard);
+        } else if (state.logs.length === 0) {
+          const loadingCard = document.createElement('div');
+          loadingCard.className = 'result-card';
+          loadingCard.innerHTML = `
+            <h3 style="margin-bottom: 12px;">
+              <svg class="pulse" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--primary); margin-right: 6px;">
+                <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+              </svg>
+              Analyzing Product Data...
+            </h3>
+            <div class="shimmer" style="margin-bottom: 8px; width: 100%;"></div>
+            <div class="shimmer" style="margin-bottom: 8px; width: 85%;"></div>
+            <div class="shimmer" style="width: 60%;"></div>
+          `;
+          content.appendChild(loadingCard);
+        }
       } else if (state.finalResult) {
         const resultCard = document.createElement('div');
         resultCard.className = 'result-card';
@@ -1369,6 +1423,14 @@ ${smartText.replace('Technology Card: ', '')}`;
     shadow.appendChild(drawer);
 
     // Bind footer Actions
+    const devToggleBtn = drawer.querySelector('#btn-dev-toggle');
+    if (devToggleBtn) {
+      devToggleBtn.addEventListener('click', () => {
+        state.showDevLogs = !state.showDevLogs;
+        renderUI();
+      });
+    }
+
     const closeBtn = drawer.querySelector('#btn-close');
     if (closeBtn) closeBtn.addEventListener('click', () => toggleDrawer(false));
     
@@ -1499,6 +1561,11 @@ ${smartText.replace('Technology Card: ', '')}`;
       .icon-btn:hover {
         background: rgba(255, 255, 255, 0.08);
         color: var(--text-main);
+      }
+      
+      .icon-btn.active {
+        color: var(--secondary);
+        background: rgba(168, 85, 247, 0.15);
       }
       
       .status-bar {
@@ -1827,6 +1894,47 @@ ${smartText.replace('Technology Card: ', '')}`;
         0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7); }
         70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
         100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+      }
+
+      .loader-radar {
+        position: relative;
+        width: 36px;
+        height: 36px;
+        background: rgba(99, 102, 241, 0.15);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid rgba(99, 102, 241, 0.3);
+      }
+      
+      .radar-ping {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        background: var(--primary);
+        opacity: 0.7;
+        animation: radar-pulsate 1.5s infinite ease-out;
+      }
+      
+      .radar-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--primary);
+        border-radius: 50%;
+        box-shadow: 0 0 10px var(--primary);
+        z-index: 1;
+      }
+      
+      @keyframes radar-pulsate {
+        0% { transform: scale(1); opacity: 0.6; }
+        100% { transform: scale(1.8); opacity: 0; }
+      }
+
+      @keyframes dot-glow {
+        from { opacity: 0.2; transform: scale(0.8); }
+        to { opacity: 1; transform: scale(1.2); }
       }
     `;
   }
