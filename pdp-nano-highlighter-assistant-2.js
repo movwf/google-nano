@@ -24,9 +24,12 @@
   };
 
   function extractData() {
+    state.dataMap = {};
     function addEntry(el, id, section, value) {
-      if (!state.dataMap[section]) state.dataMap[section] = [];
-      else state.dataMap[section].push({ id, value });
+      if (!state.dataMap[section]) {
+        state.dataMap[section] = [];
+      }
+      state.dataMap[section].push({ id, value });
       el.dataset["highlightId"] = id;
     }
 
@@ -227,9 +230,199 @@
   }
 
   // --- ReAct Loop Runner ---
+  function readSection(section) {
+    const items = state.dataMap[section];
+    if (!items || items.length === 0) return "";
+    return items.map((item) => `id: ${item.id} value: ${item.value}`).join(" | ");
+  }
+
+  function ensureAccordionActive(el) {
+    if (!el) return;
+    const accordionRoot = el.closest(
+      "#pdp-promotions, #pdp-technical, #pdp-downloads, #pdp-store-locator, #pdp-installments, #pdp-refund, #pdp-allreviews",
+    );
+    if (accordionRoot && !accordionRoot.classList.contains("active")) {
+      console.log(`Expanding collapsed accordion section: ${accordionRoot.id}`);
+      if (accordionRoot.classList.contains("acc-section")) {
+        accordionRoot.classList.add("active");
+        const content = accordionRoot.querySelector(".acc-content");
+        if (content) content.style.display = "block";
+        const indicator = accordionRoot.querySelector(".status-indicator-icon");
+        if (indicator) indicator.textContent = "▲";
+      } else {
+        const trigger =
+          accordionRoot.querySelector(".acc-header, h2, h3, h4, button, a") ||
+          accordionRoot;
+        trigger.click();
+      }
+    }
+  }
+
+  // --- ReAct Loop Runner ---
   async function runAssistant() {
-    extractData();
-    toggleForHighlight("product-title");
+    if (state.loading || !state.question.trim()) return;
+
+    state.loading = true;
+    state.logs = [];
+    state.highlighted = [];
+    state.finalResult = null;
+    cleanupHighlights();
+    renderUI();
+
+    try {
+      // 1. Extract data if not already done (retrieve from cache)
+      if (Object.keys(state.dataMap).length === 0) {
+        state.logs.push({
+          type: "action",
+          text: "Scraping page elements..."
+        });
+        extractData();
+        // If still empty, inject demo PDP elements
+        if (Object.keys(state.dataMap).length === 0) {
+          state.logs.push({
+            type: "action",
+            text: "No product elements found. Injecting demo PDP elements..."
+          });
+          injectDemoPDPElements();
+          extractData();
+        }
+      } else {
+        state.logs.push({
+          type: "action",
+          text: "Retrieved product details from cache."
+        });
+      }
+      renderUI();
+
+      // Check Gemini Nano availability
+      const lm = window.LanguageModel;
+      if (!lm) {
+        throw new Error("Gemini Nano Prompt API (window.LanguageModel) is not available.");
+      }
+      const session = await lm.create();
+
+      let history = `User Question: ${state.question}\n`;
+
+      // 2. Iterate over state.dataMap sections using readSection
+      const sections = Object.keys(state.dataMap);
+      for (const section of sections) {
+        const sectionContent = readSection(section);
+        if (!sectionContent) continue;
+
+        // Show section matching with that information
+        state.logs.push({
+          type: "action",
+          text: `Inspecting section: "${section}"`,
+        });
+        state.logs.push({
+          type: "observation",
+          text: `Section content [${section}]:\n${sectionContent}`
+        });
+        renderUI();
+
+        // Query the model to find relevant IDs in this section
+        const promptText = `You are a product page assistant. The user is asking: "${state.question}"
+We are analyzing the product details section named "${section}".
+Here is the data in this section:
+${sectionContent}
+
+Identify which IDs (if any) in the data above are relevant to answering the user's question and should be highlighted.
+For each relevant ID, provide a very short, consumer-friendly explanation of why it is relevant (maximum 10 words).
+
+Output your response strictly in this format:
+Thought: <brief reasoning why these IDs are relevant or why none are relevant>
+Highlights:
+- id: <id_to_highlight_1>, explanation: <reason_1>
+- id: <id_to_highlight_2>, explanation: <reason_2>
+(If there are no relevant elements, write "Highlights: None")`;
+
+        const response = await session.prompt(promptText);
+        console.log(`[Model response for section ${section}]:`, response);
+
+        // Parse thought
+        let thought = "";
+        const thoughtMatch = response.match(/Thought:\s*(.*?)(?=Highlights:|$)/is);
+        if (thoughtMatch) {
+          thought = thoughtMatch[1].trim();
+        } else {
+          thought = response.trim();
+        }
+
+        state.logs.push({
+          type: "think",
+          text: `Model Thought: ${thought}`
+        });
+
+        // Parse highlights
+        const highlightsLine = response.match(/Highlights:\s*([\s\S]*)$/i);
+        let foundHighlights = [];
+        if (highlightsLine && !highlightsLine[1].toLowerCase().includes("none")) {
+          const lines = highlightsLine[1].split("\n");
+          lines.forEach(line => {
+            const match = line.match(/-\s*id:\s*([a-zA-Z0-9_-]+),\s*explanation:\s*(.*)$/i);
+            if (match) {
+              const id = match[1].trim();
+              const explanation = match[2].trim();
+              foundHighlights.push({ id, explanation });
+            } else {
+              // fallback parse if format is slightly off
+              const simpleMatch = line.match(/id:\s*([a-zA-Z0-9_-]+)/i);
+              if (simpleMatch) {
+                const id = simpleMatch[1].trim();
+                foundHighlights.push({ id, explanation: "Relevant evidence" });
+              }
+            }
+          });
+        }
+
+        // Toggle highlights
+        if (foundHighlights.length > 0) {
+          foundHighlights.forEach(h => {
+            toggleForHighlight(h.id, h.explanation);
+            state.logs.push({
+              type: "action",
+              text: `Highlighted evidence: ${h.id} (${h.explanation})`,
+              sectionId: h.id
+            });
+            // Auto scroll to element
+            locateElement(h.id);
+          });
+          history += `\nSection [${section}] Highlights:\n` + foundHighlights.map(h => `- ${h.id}: ${h.explanation}`).join("\n") + "\n";
+        } else {
+          history += `\nSection [${section}] Highlights: None\n`;
+        }
+
+        renderUI();
+        await new Promise((r) => setTimeout(r, 800));
+      }
+
+      // 3. Final Answer Generation
+      state.logs.push({
+        type: "think",
+        text: "Generating final answer..."
+      });
+      renderUI();
+
+      const finalPrompt = `You are a product page assistant. The user is asking: "${state.question}".
+Here is the summary of what was highlighted on the page:
+${history}
+
+Based on this evidence, write a concise, premium, consumer-friendly response answering the user's question. Explain what evidence is highlighted on the page.`;
+
+      const finalAnswer = await session.prompt(finalPrompt);
+      state.finalResult = finalAnswer;
+
+    } catch (e) {
+      console.error("Error in runAssistant", e);
+      state.logs.push({
+        type: "observation",
+        text: `Error: ${e.message}`
+      });
+      state.finalResult = `An error occurred: ${e.message}`;
+    } finally {
+      state.loading = false;
+      renderUI();
+    }
   }
 
   // #region Highlighting Functions
@@ -245,14 +438,25 @@
     });
   }
 
-  function toggleForHighlight(id) {
+  function toggleForHighlight(id, explanation = "Relevant evidence") {
     const el = document.querySelector(`[data-highlight-id="${id}"]`);
     if (!el) {
       console.log(`ToggleForHighlight: Element not found: ${id}`);
       return;
     }
 
-    if (!state.highlighted.includes(id)) state.highlighted.push(id);
+    const existingIdx = state.highlighted.findIndex((h) => (h.id || h) === id);
+    if (existingIdx > -1) {
+      if (explanation) {
+        if (typeof state.highlighted[existingIdx] === "string") {
+          state.highlighted[existingIdx] = { id, explanation };
+        } else {
+          state.highlighted[existingIdx].explanation = explanation;
+        }
+      }
+    } else {
+      state.highlighted.push({ id, explanation });
+    }
 
     applyHighlightsToPage();
   }
@@ -260,8 +464,13 @@
   function applyHighlightsToPage() {
     cleanupHighlights(); // Cleanup previous highlights
 
-    state.highlighted.forEach((id, idx) => {
+    state.highlighted.forEach((item, idx) => {
+      const id = item.id || item;
+      const explanation = item.explanation || "Relevant evidence";
       const el = document.querySelector(`[data-highlight-id="${id}"]`);
+      if (!el) return;
+
+      ensureAccordionActive(el);
 
       const computedStyle = window.getComputedStyle(el);
       if (computedStyle.position === "static") {
@@ -301,6 +510,7 @@
 
       badge.innerHTML = `
           <span style="background: rgba(255,255,255,0.2); width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px;">${idx + 1}</span>
+          <span>${explanation}</span>
         `;
 
       badge.addEventListener("mouseenter", () => {
@@ -316,6 +526,172 @@
       });
 
       el.appendChild(badge);
+    });
+  }
+
+  // --- Demo Injected PDP HTML ---
+  function injectDemoPDPElements() {
+    const container = document.createElement("div");
+    container.id = "demo-pdp-container";
+    container.style.cssText = `
+      max-width: 1000px;
+      margin: 40px auto;
+      padding: 30px;
+      background: #ffffff;
+      color: #333333;
+      font-family: 'Inter', sans-serif;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    `;
+
+    container.innerHTML = `
+      <!-- 1. Brief -->
+      <div style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; background: #ffffff; color: #333;">
+        <h1 id="product-title" style="font-size: 22px; font-weight: bold; margin: 0 0 10px 0;">Arcelik 9140 MP OG 9 kg Camasir Makinesi</h1>
+        <div id="reviews-link" style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+          <span class="rating" data-rating="4.8" style="background: #fef3c7; color: #d97706; padding: 2px 8px; border-radius: 4px; font-weight: 600;">★ 4.8</span>
+          <span class="qty" style="color: #6b7280; font-size: 13px;"><span>124 Reviews</span></span>
+        </div>
+        <div class="pdp-price" style="font-size: 24px; font-weight: 700; color: #dc2626; margin-bottom: 16px;">24.999 TL</div>
+        
+        <div class="pdp-promotion-slider" style="margin-bottom: 16px;">
+          <div class="swiper-slide" style="font-size: 13px; color: #2563eb; background: #eff6ff; padding: 8px; border-radius: 6px; margin-bottom: 4px;">Free installation and checkout warranty!</div>
+          <div class="swiper-slide" style="font-size: 13px; color: #2563eb; background: #eff6ff; padding: 8px; border-radius: 6px;">Extra 10% off for credit cards.</div>
+        </div>
+
+        <div class="pdp-features" style="display: flex; gap: 12px; border-top: 1px dashed #e5e7eb; padding-top: 12px;">
+          <div class="item" style="border: 1px solid #f3f4f6; padding: 8px 12px; border-radius: 6px; text-align: center; flex: 1;">
+            <div class="t" style="font-size: 11px; color: #6b7280; font-weight: bold;">Capacity</div>
+            <div class="v" style="font-size: 14px; font-weight: bold; color: #1f2937;">9 kg</div>
+          </div>
+          <div class="item" style="border: 1px solid #f3f4f6; padding: 8px 12px; border-radius: 6px; text-align: center; flex: 1;">
+            <div class="t" style="font-size: 11px; color: #6b7280; font-weight: bold;">Spin Speed</div>
+            <div class="v" style="font-size: 14px; font-weight: bold; color: #1f2937;">1400 rpm</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Technologies -->
+      <div style="border: 1px solid #e5e7eb; padding: 20px; border-radius: 8px; background: #ffffff; color: #333;">
+        <h2 style="font-size: 18px; font-weight: bold; margin-bottom: 12px;">Technologies</h2>
+        <div class="pdp-technologies" style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="ftc-item" style="border: 1px solid #e5e7eb; padding: 12px; border-radius: 6px; background: #fafafa;">
+            <strong class="ftc-title" style="color: #1e3a8a; display: block; margin-bottom: 4px;">CycleTech</strong>
+            <span class="ftc-text">CycleTech optimizes drum rhythm and speed. The customized rotation allows clothes to slide gently along the drum, preserving fabric quality and saving 30% energy.</span>
+          </div>
+          <div class="ftc-item" style="border: 1px solid #e5e7eb; padding: 12px; border-radius: 6px; background: #fafafa;">
+            <strong class="ftc-title" style="color: #1e3a8a; display: block; margin-bottom: 4px;">HomeWhiz Connection</strong>
+            <span class="ftc-text">HomeWhiz provides smart remote controls over Wi-Fi, allowing you to configure wash programs or download new ones via the mobile app.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3. Detailed Information / Accordions -->
+      <div class="pdp-tab" style="grid-column: span 2; display: flex; flex-direction: column; gap: 16px; color: #333;">
+        <h2 style="font-size: 18px; font-weight: bold; margin-bottom: 8px; color: #1e293b;">Detailed Information</h2>
+
+        <!-- promotions accordion (collapsed) -->
+        <div id="pdp-promotions" class="acc-section" data-acc-section="Active Promotions" style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: #ffffff; cursor: pointer;">
+          <div class="acc-header" style="background: #f8fafc; padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>Active Promotions</span>
+            <span class="status-indicator-icon">▼</span>
+          </div>
+          <div class="acc-content" style="padding: 16px; display: none; border-top: 1px solid #e5e7eb;">
+            <div class="acc-item">
+              <div class="act" style="color: #059669; font-weight: 600;"><span>Campaign 1: 50% discount on laundry detergent with purchase!</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- technical accordion (active by default for test) -->
+        <div id="pdp-technical" class="acc-section active" data-acc-section="Technical Specifications" style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: #ffffff; cursor: pointer;">
+          <div class="acc-header" style="background: #f8fafc; padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>Technical Specifications</span>
+            <span class="status-indicator-icon">▲</span>
+          </div>
+          <div class="acc-content" style="padding: 16px; border-top: 1px solid #e5e7eb; display: block;">
+            <div class="feature-item" style="margin-bottom: 12px;">
+              <div class="title" style="font-weight: bold; color: #475569; margin-bottom: 6px; font-size: 14px;">Performance & Consumption</div>
+              <div class="item" style="display: flex; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid #f1f5f9;">
+                <span class="t" style="color: #64748b;">Energy Class</span>
+                <span class="v" style="font-weight: 600; color: #059669;">A (Scale A to G)</span>
+              </div>
+              <div class="item" style="display: flex; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid #f1f5f9;">
+                <span class="t" style="color: #64748b;">Energy Consumption</span>
+                <span class="v" style="font-weight: 600;">49 kWh per 100 cycles</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- downloads accordion (collapsed) -->
+        <div id="pdp-downloads" class="acc-section" data-acc-section="Downloads & Documents" style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: #ffffff; cursor: pointer;">
+          <div class="acc-header" style="background: #f8fafc; padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>Downloads & Documents</span>
+            <span class="status-indicator-icon">▼</span>
+          </div>
+          <div class="acc-content" style="padding: 16px; display: none; border-top: 1px solid #e5e7eb;">
+            <div class="tab-content">
+              <div class="item" style="margin-bottom: 8px;">
+                <a href="/downloads/manual.pdf" style="color: #2563eb; font-weight: bold; text-decoration: none;">
+                  <span class="v">User Manual PDF</span>
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- installments accordion (collapsed) -->
+        <div id="pdp-installments" class="acc-section" data-acc-section="Installment Options" style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: #ffffff; cursor: pointer;">
+          <div class="acc-header" style="background: #f8fafc; padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>Installment Options</span>
+            <span class="status-indicator-icon">▼</span>
+          </div>
+          <div class="acc-content" style="padding: 16px; display: none; border-top: 1px solid #e5e7eb;">
+            <div class="installments-card">
+              <div class="acc-item">
+                <h4 style="margin: 0 0 6px 0; color: #1e293b;">Worldcard: up to 9 installments</h4>
+              </div>
+              <div class="acc-item">
+                <h4 style="margin: 0; color: #1e293b;">Bonus Card: up to 12 installments</h4>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- refund accordion (collapsed) -->
+        <div id="pdp-refund" class="acc-section" data-acc-section="Refund Policy" style="border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; background: #ffffff; cursor: pointer;">
+          <div class="acc-header" style="background: #f8fafc; padding: 12px 16px; font-weight: bold; display: flex; justify-content: space-between; align-items: center;">
+            <span>Refund Policy</span>
+            <span class="status-indicator-icon">▼</span>
+          </div>
+          <div class="acc-content" style="padding: 16px; display: none; border-top: 1px solid #e5e7eb;">
+            14-day money-back guarantee, free return shipping for returns requested through our client panel.
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.prepend(container);
+
+    // Click handler to toggle collapsed/active states inside our demo mockup
+    container.querySelectorAll(".acc-section").forEach((section) => {
+      const header = section.querySelector(".acc-header");
+      header.addEventListener("click", () => {
+        const isActive = section.classList.contains("active");
+        if (isActive) {
+          section.classList.remove("active");
+          section.querySelector(".acc-content").style.display = "none";
+          section.querySelector(".status-indicator-icon").textContent = "▼";
+        } else {
+          section.classList.add("active");
+          section.querySelector(".acc-content").style.display = "block";
+          section.querySelector(".status-indicator-icon").textContent = "▲";
+        }
+      });
     });
   }
   // #endregion Highlighting Functions
@@ -345,6 +721,10 @@
 
   function handleReset() {
     cleanupHighlights();
+    const container = document.getElementById("demo-pdp-container");
+    if (container) {
+      container.remove();
+    }
     state.question = "";
     state.highlighted = [];
     state.logs = [];
@@ -363,7 +743,7 @@
     const el = document.querySelector(`[data-highlight-id="${id}"]`);
     if (!el) return;
     // Expand accordion first if collapsed
-    // ensureAccordionActive(el);
+    ensureAccordionActive(el);
 
     // Smooth scroll
     el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -374,7 +754,7 @@
     el.style.boxShadow = "0 0 35px #a855f7";
     el.style.border = "3px solid #a855f7";
     setTimeout(() => {
-      const isHighlighted = state.highlighted.some((h) => h.id === id);
+      const isHighlighted = state.highlighted.some((h) => (h.id || h) === id);
       if (isHighlighted) {
         el.style.boxShadow = "0 0 20px rgba(99, 102, 241, 0.6)";
         el.style.border = "3px solid #6366f1";
@@ -613,7 +993,7 @@
           `;
 
           // Render interactive Jump/Goto button next to the section data log
-          if (log.sectionId && state.dataMap[log.sectionId]) {
+          if (log.sectionId && document.querySelector(`[data-highlight-id="${log.sectionId}"]`)) {
             const gotoBtn = document.createElement("button");
             gotoBtn.className = "btn-locate";
             gotoBtn.style.cssText =
@@ -623,7 +1003,7 @@
                 <line x1="22" y1="2" x2="11" y2="13"></line>
                 <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
               </svg>
-              Go to Section
+              Go to Element
             `;
             gotoBtn.addEventListener("click", () =>
               locateElement(log.sectionId),
@@ -729,18 +1109,20 @@
         hPanel.innerHTML = `<div class="quick-label">Highlighted Evidence (${state.highlighted.length})</div>`;
 
         state.highlighted.forEach((h, idx) => {
+          const id = h.id || h;
+          const explanation = h.explanation || "Relevant evidence";
           const hItem = document.createElement("div");
           hItem.className = "highlight-item";
           hItem.innerHTML = `
             <div class="highlight-info">
-              <div class="highlight-id">Evidence #${idx + 1} (${h.id})</div>
-              <div class="highlight-explanation">${h.explanation}</div>
+              <div class="highlight-id">Evidence #${idx + 1} (${id})</div>
+              <div class="highlight-explanation">${explanation}</div>
             </div>
-            <button class="btn-locate" data-id="${h.id}">Locate</button>
+            <button class="btn-locate" data-id="${id}">Locate</button>
           `;
           hItem
             .querySelector(".btn-locate")
-            .addEventListener("click", () => locateElement(h.id));
+            .addEventListener("click", () => locateElement(id));
           hPanel.appendChild(hItem);
         });
         content.appendChild(hPanel);
