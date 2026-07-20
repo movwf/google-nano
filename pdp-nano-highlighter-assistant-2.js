@@ -9,6 +9,18 @@
 (async function () {
   "use strict";
 
+  const _SECTIONS_ORDER = [
+    "brief",
+    "technologies",
+    "product-details-promotions",
+    "product-details-technical-specs",
+    "product-details-documents",
+    "product-details-store-locator",
+    "product-details-installments",
+    "product-details-refund",
+    "product-details-reviews",
+  ];
+
   // Global State
   const state = {
     active: true,
@@ -375,8 +387,13 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
 
       // Tuning: Ensure selected sections include the brief (sometimes model misses it)
       if (!selectedSections.includes("brief")) {
-        selectedSections.push("brief");
+        selectedSections.unshift("brief");
       }
+
+      // Tuning: Ensure selected sections are in the correct order
+      selectedSections = selectedSections.sort((a, b) => {
+        return _SECTIONS_ORDER.indexOf(a) - _SECTIONS_ORDER.indexOf(b);
+      });
 
       state.logs.push({
         type: "action",
