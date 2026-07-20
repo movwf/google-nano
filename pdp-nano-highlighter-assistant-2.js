@@ -20,7 +20,7 @@
     highlighted: [], // [{ id, explanation }]
     logs: [], // [{ type: 'think'|'action'|'observation', text: string, sectionId?: string }]
     finalResult: null,
-    showDevLogs: false, // DEV toggle to show/hide the technical ReAct loop activity (hidden by default for consumer use)
+    showDevLogs: false, // DEV toggle to show/hide the loop activity (hidden by default for consumer use)
   };
 
   function extractData() {
@@ -229,11 +229,13 @@
     }
   }
 
-  // --- ReAct Loop Runner ---
+  // --- Agent Loop Runner ---
   function readSection(section) {
     const items = state.dataMap[section];
     if (!items || items.length === 0) return "";
-    return items.map((item) => `id: ${item.id} value: ${item.value}`).join(" | ");
+    return items
+      .map((item) => `id: ${item.id} value: ${item.value}`)
+      .join(" | ");
   }
 
   function ensureAccordionActive(el) {
@@ -258,7 +260,7 @@
     }
   }
 
-  // --- ReAct Loop Runner ---
+  // --- Agent Loop Runner ---
   async function runAssistant() {
     if (state.loading || !state.question.trim()) return;
 
@@ -274,14 +276,14 @@
       if (Object.keys(state.dataMap).length === 0) {
         state.logs.push({
           type: "action",
-          text: "Scraping page elements..."
+          text: "Scraping page elements...",
         });
         extractData();
         // If still empty, inject demo PDP elements
         if (Object.keys(state.dataMap).length === 0) {
           state.logs.push({
             type: "action",
-            text: "No product elements found. Injecting demo PDP elements..."
+            text: "No product elements found. Injecting demo PDP elements...",
           });
           injectDemoPDPElements();
           extractData();
@@ -289,7 +291,7 @@
       } else {
         state.logs.push({
           type: "action",
-          text: "Retrieved product details from cache."
+          text: "Retrieved product details from cache.",
         });
       }
       renderUI();
@@ -297,15 +299,91 @@
       // Check Gemini Nano availability
       const lm = window.LanguageModel;
       if (!lm) {
-        throw new Error("Gemini Nano Prompt API (window.LanguageModel) is not available.");
+        throw new Error(
+          "Gemini Nano Prompt API (window.LanguageModel) is not available.",
+        );
       }
       const session = await lm.create();
 
+      // 2. Decide which sections are relevant
+      const allSections = Object.keys(state.dataMap);
+      state.logs.push({
+        type: "think",
+        text: `Deciding which sections to inspect from: ${allSections.join(", ")}`,
+      });
+      renderUI();
+
+      const selectSectionsPrompt = `You are a product page assistant. The user is asking: "${state.question}"
+The product details are divided into these sections:
+${allSections.map((s) => `- ${s}`).join("\n")}
+
+Identify which sections from the list above are highly likely to contain the answer or relevant evidence to the user's question.
+Output your response strictly in this format:
+Thought: <your brief reasoning for choosing these sections>
+Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
+
+      const selectResponse = await session.prompt(selectSectionsPrompt);
+      console.log(`[Model section selection response]:`, selectResponse);
+
+      // Parse selection thought
+      let selectThought = "";
+      const selectThoughtMatch = selectResponse.match(
+        /Thought:\s*(.*?)(?=Selected Sections:|$)/is,
+      );
+      if (selectThoughtMatch) {
+        selectThought = selectThoughtMatch[1].trim();
+      } else {
+        selectThought = selectResponse.trim();
+      }
+
+      state.logs.push({
+        type: "think",
+        text: `Selection Thought: ${selectThought}`,
+      });
+
+      // Parse selected sections
+      let selectedSections = [];
+      const sectionsMatch = selectResponse.match(/Selected Sections:\s*(.*)/i);
+      const listText = sectionsMatch
+        ? sectionsMatch[1].trim()
+        : selectResponse.trim();
+
+      if (!listText.toLowerCase().includes("none")) {
+        const candidates = listText.split(/[\n,]/);
+        candidates.forEach((c) => {
+          const clean = c.replace(/[-*"\']/g, "").trim();
+          const found = allSections.find(
+            (s) => s.toLowerCase() === clean.toLowerCase(),
+          );
+          if (found && !selectedSections.includes(found)) {
+            selectedSections.push(found);
+          }
+        });
+      }
+
+      // Fallback: check if any section name is mentioned anywhere in the response
+      if (
+        selectedSections.length === 0 &&
+        !listText.toLowerCase().includes("none")
+      ) {
+        allSections.forEach((s) => {
+          const regex = new RegExp(`\\b${s}\\b`, "i");
+          if (regex.test(selectResponse)) {
+            selectedSections.push(s);
+          }
+        });
+      }
+
+      state.logs.push({
+        type: "action",
+        text: `Model selected sections: ${selectedSections.length > 0 ? selectedSections.join(", ") : "None"}`,
+      });
+      renderUI();
+
       let history = `User Question: ${state.question}\n`;
 
-      // 2. Iterate over state.dataMap sections using readSection
-      const sections = Object.keys(state.dataMap);
-      for (const section of sections) {
+      // 3. Evaluate selected sections using readSection
+      for (const section of selectedSections) {
         const sectionContent = readSection(section);
         if (!sectionContent) continue;
 
@@ -316,7 +394,7 @@
         });
         state.logs.push({
           type: "observation",
-          text: `Section content [${section}]:\n${sectionContent}`
+          text: `Section content [${section}]:\n${sectionContent}`,
         });
         renderUI();
 
@@ -341,7 +419,9 @@ Highlights:
 
         // Parse thought
         let thought = "";
-        const thoughtMatch = response.match(/Thought:\s*(.*?)(?=Highlights:|$)/is);
+        const thoughtMatch = response.match(
+          /Thought:\s*(.*?)(?=Highlights:|$)/is,
+        );
         if (thoughtMatch) {
           thought = thoughtMatch[1].trim();
         } else {
@@ -350,16 +430,21 @@ Highlights:
 
         state.logs.push({
           type: "think",
-          text: `Model Thought: ${thought}`
+          text: `Model Thought: ${thought}`,
         });
 
         // Parse highlights
         const highlightsLine = response.match(/Highlights:\s*([\s\S]*)$/i);
         let foundHighlights = [];
-        if (highlightsLine && !highlightsLine[1].toLowerCase().includes("none")) {
+        if (
+          highlightsLine &&
+          !highlightsLine[1].toLowerCase().includes("none")
+        ) {
           const lines = highlightsLine[1].split("\n");
-          lines.forEach(line => {
-            const match = line.match(/-\s*id:\s*([a-zA-Z0-9_-]+),\s*explanation:\s*(.*)$/i);
+          lines.forEach((line) => {
+            const match = line.match(
+              /-\s*id:\s*([a-zA-Z0-9_-]+),\s*explanation:\s*(.*)$/i,
+            );
             if (match) {
               const id = match[1].trim();
               const explanation = match[2].trim();
@@ -377,17 +462,22 @@ Highlights:
 
         // Toggle highlights
         if (foundHighlights.length > 0) {
-          foundHighlights.forEach(h => {
+          foundHighlights.forEach((h) => {
             toggleForHighlight(h.id, h.explanation);
             state.logs.push({
               type: "action",
               text: `Highlighted evidence: ${h.id} (${h.explanation})`,
-              sectionId: h.id
+              sectionId: h.id,
             });
             // Auto scroll to element
             locateElement(h.id);
           });
-          history += `\nSection [${section}] Highlights:\n` + foundHighlights.map(h => `- ${h.id}: ${h.explanation}`).join("\n") + "\n";
+          history +=
+            `\nSection [${section}] Highlights:\n` +
+            foundHighlights
+              .map((h) => `- ${h.id}: ${h.explanation}`)
+              .join("\n") +
+            "\n";
         } else {
           history += `\nSection [${section}] Highlights: None\n`;
         }
@@ -399,7 +489,7 @@ Highlights:
       // 3. Final Answer Generation
       state.logs.push({
         type: "think",
-        text: "Generating final answer..."
+        text: "Generating final answer...",
       });
       renderUI();
 
@@ -411,12 +501,11 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
 
       const finalAnswer = await session.prompt(finalPrompt);
       state.finalResult = finalAnswer;
-
     } catch (e) {
       console.error("Error in runAssistant", e);
       state.logs.push({
         type: "observation",
-        text: `Error: ${e.message}`
+        text: `Error: ${e.message}`,
       });
       state.finalResult = `An error occurred: ${e.message}`;
     } finally {
@@ -905,7 +994,7 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
       warning.className = "warning-card";
       warning.innerHTML = `
         <h4>Gemini Nano Required</h4>
-        <p>This assistant runs local ReAct reasoning over PDP data using Chrome Gemini Nano. To configure your browser:</p>
+        <p>This assistant runs local reasoning over PDP data using Chrome Gemini Nano. To configure your browser:</p>
         <ol>
           <li>Open <b>chrome://flags/#optimization-guide-on-device-model</b> and select <b>Enabled (BypassPerfRequirement)</b>.</li>
           <li>Open <b>chrome://flags/#prompt-api-for-gemini-nano</b> and select <b>Enabled</b>.</li>
@@ -969,7 +1058,7 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
         consoleWrapper.style.flexDirection = "column";
         consoleWrapper.style.gap = "8px";
 
-        consoleWrapper.innerHTML = `<div class="quick-label">Agentic ReAct Loop Activity</div>`;
+        consoleWrapper.innerHTML = `<div class="quick-label">Agentic Loop Activity</div>`;
         const consoleEl = document.createElement("div");
         consoleEl.className = "console";
 
@@ -993,7 +1082,10 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
           `;
 
           // Render interactive Jump/Goto button next to the section data log
-          if (log.sectionId && document.querySelector(`[data-highlight-id="${log.sectionId}"]`)) {
+          if (
+            log.sectionId &&
+            document.querySelector(`[data-highlight-id="${log.sectionId}"]`)
+          ) {
             const gotoBtn = document.createElement("button");
             gotoBtn.className = "btn-locate";
             gotoBtn.style.cssText =
