@@ -24,15 +24,10 @@
   };
 
   function extractData() {
-    const extractedList = [];
-    const dataMap = {};
-
     function addEntry(el, id, section, value) {
-      dataMap[section]
-        ? dataMap[section].push({ id, value })
-        : (dataMap[section] = [{ id, value }]);
+      if (!state.dataMap[section]) state.dataMap[section] = [];
+      else state.dataMap[section].push({ id, value });
       el.dataset["highlightId"] = id;
-      extractedList.push(`ID: ${id} | Section: ${section} | Value: ${value}`);
     }
 
     function flattenMultilineText(text) {
@@ -131,7 +126,6 @@
           `${tEl.innerText}: ${vEl.innerText}`,
         );
       }
-      // TODO: Summarize text
     });
 
     // TODO: Toggle
@@ -230,10 +224,103 @@
         `${detailTitle}`,
       );
     }
-
-    return { extractedList, dataMap };
   }
 
+  // --- ReAct Loop Runner ---
+  async function runAssistant() {
+    extractData();
+    toggleForHighlight("product-title");
+  }
+
+  // #region Highlighting Functions
+  function cleanupHighlights() {
+    const prev = document.querySelectorAll(".pdp-nano-highlight-wrapper");
+    prev.forEach((el) => el.remove());
+    document.querySelectorAll("[data-highlight-id]").forEach((el) => {
+      el.style.border = "";
+      el.style.boxShadow = "";
+      el.style.position = "";
+      el.style.borderRadius = "";
+      el.style.transition = "";
+    });
+  }
+
+  function toggleForHighlight(id) {
+    const el = document.querySelector(`[data-highlight-id="${id}"]`);
+    if (!el) {
+      console.log(`ToggleForHighlight: Element not found: ${id}`);
+      return;
+    }
+
+    if (!state.highlighted.includes(id)) state.highlighted.push(id);
+
+    applyHighlightsToPage();
+  }
+
+  function applyHighlightsToPage() {
+    cleanupHighlights(); // Cleanup previous highlights
+
+    state.highlighted.forEach((id, idx) => {
+      const el = document.querySelector(`[data-highlight-id="${id}"]`);
+
+      const computedStyle = window.getComputedStyle(el);
+      if (computedStyle.position === "static") {
+        el.style.position = "relative";
+      }
+
+      // Apply Premium Neon Outline
+      el.style.border = "3px solid #6366f1";
+      el.style.boxShadow = "0 0 20px rgba(99, 102, 241, 0.6)";
+      el.style.borderRadius = "8px";
+      el.style.transition = "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+
+      // Create Badge
+      const badge = document.createElement("div");
+      badge.className = "pdp-nano-highlight-wrapper";
+      badge.style.cssText = `
+          position: absolute;
+          top: -14px;
+          left: 14px;
+          background: linear-gradient(135deg, #6366f1, #a855f7);
+          color: #ffffff;
+          padding: 5px 12px;
+          border-radius: 20px;
+          font-size: 11px;
+          font-weight: 700;
+          font-family: 'Inter', sans-serif;
+          box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+          z-index: 100000;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          pointer-events: auto;
+          cursor: pointer;
+          border: 1px solid rgba(255,255,255,0.2);
+          transition: all 0.2s ease;
+        `;
+
+      badge.innerHTML = `
+          <span style="background: rgba(255,255,255,0.2); width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px;">${idx + 1}</span>
+        `;
+
+      badge.addEventListener("mouseenter", () => {
+        badge.style.transform = "scale(1.05)";
+        el.style.boxShadow = "0 0 30px rgba(168, 85, 247, 0.8)";
+        el.style.borderColor = "#a855f7";
+      });
+
+      badge.addEventListener("mouseleave", () => {
+        badge.style.transform = "scale(1)";
+        el.style.boxShadow = "0 0 20px rgba(99, 102, 241, 0.6)";
+        el.style.borderColor = "#6366f1";
+      });
+
+      el.appendChild(badge);
+    });
+  }
+  // #endregion Highlighting Functions
+
+  // #region UI
   // Remove existing instance if any (allows clean hot reloading)
   const existingRoot = document.getElementById("pdp-nano-assistant-root");
   if (existingRoot) {
@@ -258,10 +345,6 @@
 
   function handleReset() {
     cleanupHighlights();
-    const container = document.getElementById("demo-pdp-container");
-    if (container) {
-      container.remove();
-    }
     state.question = "";
     state.highlighted = [];
     state.logs = [];
@@ -277,30 +360,29 @@
   }
 
   function locateElement(id) {
-    let item = state.dataMap[id];
-    if (item && item.element) {
-      // Expand accordion first if collapsed
-      ensureAccordionActive(item.element);
+    const el = document.querySelector(`[data-highlight-id="${id}"]`);
+    if (!el) return;
+    // Expand accordion first if collapsed
+    // ensureAccordionActive(el);
 
-      // Smooth scroll
-      item.element.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Smooth scroll
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
 
-      // Temporary flash highlight effect
-      const origBox = item.element.style.boxShadow;
-      const origBorder = item.element.style.border;
-      item.element.style.boxShadow = "0 0 35px #a855f7";
-      item.element.style.border = "3px solid #a855f7";
-      setTimeout(() => {
-        const isHighlighted = state.highlighted.some((h) => h.id === id);
-        if (isHighlighted) {
-          item.element.style.boxShadow = "0 0 20px rgba(99, 102, 241, 0.6)";
-          item.element.style.border = "3px solid #6366f1";
-        } else {
-          item.element.style.boxShadow = origBox;
-          item.element.style.border = origBorder;
-        }
-      }, 1500);
-    }
+    // Temporary flash highlight effect
+    const origBox = el.style.boxShadow;
+    const origBorder = el.style.border;
+    el.style.boxShadow = "0 0 35px #a855f7";
+    el.style.border = "3px solid #a855f7";
+    setTimeout(() => {
+      const isHighlighted = state.highlighted.some((h) => h.id === id);
+      if (isHighlighted) {
+        el.style.boxShadow = "0 0 20px rgba(99, 102, 241, 0.6)";
+        el.style.border = "3px solid #6366f1";
+      } else {
+        el.style.boxShadow = origBox;
+        el.style.border = origBorder;
+      }
+    }, 1500);
   }
 
   // Register Global Esc toggle
@@ -350,23 +432,6 @@
       };
     }
   }
-
-  // Initialize
-  await (async function () {
-    renderUI();
-    const status = await checkGeminiNano();
-    if (status.available) {
-      state.apiStatus = "ready";
-    } else {
-      state.apiStatus = "error";
-      state.apiStatusReason = status.reason;
-      console.warn(
-        "Chrome Gemini Nano not detected or not ready.",
-        status.reason,
-      );
-    }
-    renderUI();
-  })();
 
   // --- UI Renderer ---
   function renderUI() {
@@ -1180,4 +1245,23 @@
       }
     `;
   }
+
+  // #endregion UI
+
+  // Initialize
+  await (async function () {
+    renderUI();
+    const status = await checkGeminiNano();
+    if (status.available) {
+      state.apiStatus = "ready";
+    } else {
+      state.apiStatus = "error";
+      state.apiStatusReason = status.reason;
+      console.warn(
+        "Chrome Gemini Nano not detected or not ready.",
+        status.reason,
+      );
+    }
+    renderUI();
+  })();
 })();
