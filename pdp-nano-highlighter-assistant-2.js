@@ -344,6 +344,10 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
       // Parse selected sections
       let selectedSections = [];
       const sectionsMatch = selectResponse.match(/Selected Sections:\s*(.*)/i);
+      console.log({
+        sectionsMatch,
+        selectResponse,
+      });
       const listText = sectionsMatch
         ? sectionsMatch[1].trim()
         : selectResponse.trim();
