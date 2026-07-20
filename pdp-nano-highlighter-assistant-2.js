@@ -344,26 +344,30 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
       // Parse selected sections
       let selectedSections = [];
       const sectionsMatch = selectResponse.match(/Selected Sections:\s*(.*)/i);
+      const listText = sectionsMatch
+        ? sectionsMatch[1].toLowerCase().trim()
+        : selectResponse.toLowerCase().trim();
+
       console.log({
         sectionsMatch,
         selectResponse,
+        selectedSections,
+        listText,
       });
-      const listText = sectionsMatch
-        ? sectionsMatch[1].trim()
-        : selectResponse.trim();
 
       if (!listText.toLowerCase().includes("none")) {
         const candidates = listText.split(/[\n,]/);
         candidates.forEach((c) => {
-          const clean = c.replace(/[-*"\']/g, "").trim();
           const found = allSections.find(
-            (s) => s.toLowerCase() === clean.toLowerCase(),
+            (s) => s.toLowerCase() === c.trim().toLowerCase(),
           );
           if (found && !selectedSections.includes(found)) {
             selectedSections.push(found);
           }
         });
       }
+
+      console.log(selectedSections);
 
       // Fallback: check if any section name is mentioned anywhere in the response
       if (
@@ -377,6 +381,8 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
           }
         });
       }
+
+      console.log({ selectedSections });
 
       state.logs.push({
         type: "action",
