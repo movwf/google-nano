@@ -348,13 +348,6 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
         ? sectionsMatch[1].toLowerCase().trim()
         : selectResponse.toLowerCase().trim();
 
-      console.log({
-        sectionsMatch,
-        selectResponse,
-        selectedSections,
-        listText,
-      });
-
       if (!listText.toLowerCase().includes("none")) {
         const candidates = listText.split(/[\n,]/);
         candidates.forEach((c) => {
@@ -366,8 +359,6 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
           }
         });
       }
-
-      console.log(selectedSections);
 
       // Fallback: check if any section name is mentioned anywhere in the response
       if (
@@ -382,7 +373,10 @@ Selected Sections: <section_name_1>, <section_name_2>, ... (or "None")`;
         });
       }
 
-      console.log({ selectedSections });
+      // Tuning: Ensure selected sections include the brief (sometimes model misses it)
+      if (!selectedSections.includes("brief")) {
+        selectedSections.push("brief");
+      }
 
       state.logs.push({
         type: "action",
@@ -1190,6 +1184,9 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
         }
       } else if (state.finalResult) {
         const resultCard = document.createElement("div");
+        const resultText = state.showDevLogs
+          ? state.finalResult
+          : state.finalResult.match(/Response:\s*(.*)/i)[1];
         resultCard.className = "result-card";
         resultCard.innerHTML = `
           <h3>
@@ -1199,7 +1196,7 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
             </svg>
             Evidence Summary
           </h3>
-          <div style="font-size: 13px; line-height: 1.5; color: #e2e8f0; font-family: inherit; white-space: pre-line;">${state.finalResult}</div>
+          <div style="font-size: 13px; line-height: 1.5; color: #e2e8f0; font-family: inherit; white-space: pre-line;">${resultText}</div>
         `;
         content.appendChild(resultCard);
       }
