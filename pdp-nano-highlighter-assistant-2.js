@@ -598,7 +598,7 @@ Based on this evidence, write a concise, premium, consumer-friendly response ans
       badge.className = "pdp-nano-highlight-wrapper";
       badge.style.cssText = `
           position: absolute;
-          top: -14px;
+          top: 10px;
           left: 14px;
           background: linear-gradient(135deg, #6366f1, #a855f7);
           color: #ffffff;
