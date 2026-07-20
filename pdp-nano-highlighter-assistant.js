@@ -671,6 +671,11 @@ Constraints:
         }
       }
 
+      console.log("Starting ReAct loop...");
+      console.log(state);
+      console.log(extractData());
+      return;
+
       let loopCount = 0;
       const maxLoops = 8;
       let history = `User Question: ${state.question}\n`;
